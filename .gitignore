@@ -1,0 +1,15 @@
+# Virtual env
+.venv/
+
+# Python cache
+__pycache__/
+
+# Log files
+*.log
+
+# Secrets
+service_account.json
+
+# Temporary files
+test_upload.txt
+.DS_Store
