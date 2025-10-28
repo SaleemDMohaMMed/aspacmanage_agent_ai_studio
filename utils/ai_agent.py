@@ -20,6 +20,16 @@ class AIAgent:
                     else:
                         return {"response": f"The folder '{folder_name}' is empty or does not exist.", "intent": "list_files_empty"}
 
+            # Intent: Rename a file
+            elif "rename" in message_lower:
+                rename_match = re.search(r"rename\s+['\"]?([\w\._-]+)['\"]?\s+to\s+['\"]?([\w\._-]+)['\"]?\s+in\s+(?:the\s+)?(?:folder\s+)?['\"]?([\w\._-]+)['\"]?", message_lower)
+                if rename_match:
+                    old_file_name = rename_match.group(1)
+                    new_file_name = rename_match.group(2)
+                    folder_name = rename_match.group(3)
+                    result = self.gcs_client.rename_file(folder_name, old_file_name, new_file_name)
+                    return {"response": result, "intent": "rename_file"}
+
             # Intent: Edit a file
             elif "edit" in message_lower or "update" in message_lower or "change" in message_lower:
                 file_match = re.search(r"(?:file|document)\s+['\"]?([\w\._-]+)['\"]?", message_lower)

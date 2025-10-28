@@ -8,11 +8,13 @@ from utils.gcs_client import GCSClient
 from utils.ai_agent import AIAgent
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all origins
+# More robust CORS configuration to handle all cases
+CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
-# Define the upload folder
+# Define the upload folder and ensure it exists
 UPLOAD_FOLDER = 'uploads'
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 try:
     gcs_client = GCSClient()
@@ -67,6 +69,68 @@ def list_folders():
         return jsonify({"error": "GCS client not initialized"}), 500
     folders = gcs_client.list_folders()
     return jsonify({"folders": folders})
+
+@app.route("/create_folder", methods=["POST"])
+def create_folder():
+    if 'Authorization' not in request.headers:
+        return jsonify({"error": "Authorization header is missing"}), 401
+    if not gcs_client:
+        return jsonify({"error": "GCS client not initialized"}), 500
+    
+    data = request.get_json()
+    folder_name = data.get("folderName")
+
+    if not folder_name:
+        return jsonify({"error": "Folder name is required"}), 400
+    
+    try:
+        result = gcs_client.create_folder(folder_name)
+        return jsonify({"message": result}), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/delete_folder", methods=["DELETE"])
+def delete_folder():
+    if 'Authorization' not in request.headers:
+        return jsonify({"error": "Authorization header is missing"}), 401
+    if not gcs_client:
+        return jsonify({"error": "GCS client not initialized"}), 500
+    
+    data = request.get_json()
+    folder_names = data.get("folderNames")
+
+    if not folder_names or not isinstance(folder_names, list):
+        return jsonify({"error": "folderNames must be a non-empty list of strings."}), 400
+    
+    successes = []
+    failures = []
+
+    for name in folder_names:
+        try:
+            result = gcs_client.delete_folder(name)
+            if "deleted" in result.lower():
+                successes.append(result)
+            else:
+                failures.append(f"Failed to delete folder '{name}': {result}")
+        except Exception as e:
+            failures.append(f"Failed to delete folder '{name}': {str(e)}")
+
+    if not failures:
+        return jsonify({
+            "message": f"Successfully deleted {len(successes)} folder(s).",
+            "details": successes
+        }), 200
+    elif not successes:
+        return jsonify({
+            "message": "All folder deletions failed.",
+            "details": failures
+        }), 500
+    else:
+        return jsonify({
+            "message": f"Completed with {len(failures)} failure(s) and {len(successes)} success(es).",
+            "successes": successes,
+            "failures": failures
+        }), 207 # Multi-Status
 
 @app.route("/list_files", methods=["GET"])
 def list_files():
@@ -129,6 +193,26 @@ def edit_file():
     result = gcs_client.edit_file(folder, file_name, new_content)
     return jsonify({"message": result})
 
+@app.route("/rename_file", methods=["POST"])
+def rename_file():
+    if not gcs_client:
+        return jsonify({"error": "GCS client not initialized"}), 500
+    data = request.get_json()
+    folder = data.get("folder")
+    old_file_name = data.get("old_file_name")
+    new_file_name = data.get("new_file_name")
+
+    if not all([folder, old_file_name, new_file_name]):
+        return jsonify({"error": "Folder, old file name, and new file name are required"}), 400
+
+    try:
+        result = gcs_client.rename_file(folder, old_file_name, new_file_name)
+        if "Error" in result:
+             return jsonify({"error": result}), 404
+        return jsonify({"message": result}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/chat", methods=["POST"])
 def chat():
     if not ai_agent:
@@ -141,4 +225,4 @@ def chat():
     return jsonify(response)
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', debug=True)
+    app.run(host='0.0.0.0', port=8080, debug=True)
