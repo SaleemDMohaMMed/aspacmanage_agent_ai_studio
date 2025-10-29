@@ -1,3 +1,4 @@
+
 import os
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
@@ -132,6 +133,48 @@ def delete_folder():
             "failures": failures
         }), 207 # Multi-Status
 
+@app.route("/copyFolder", methods=["POST"])
+def copy_folder():
+    if not gcs_client:
+        return jsonify({"error": "GCS client not initialized"}), 500
+
+    data = request.get_json()
+    source_paths = data.get("sourcePaths")
+    destination_path = data.get("destinationPath")
+
+    if not source_paths or not isinstance(source_paths, list):
+        return jsonify({"error": "sourcePaths must be a non-empty list of strings."}), 400
+    
+    if not destination_path:
+        return jsonify({"error": "destinationPath is required"}), 400
+
+    try:
+        result = gcs_client.copy_folder(source_paths, destination_path)
+        return jsonify({"status": "success", "message": result}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/moveFolder", methods=["POST"])
+def move_folder():
+    if not gcs_client:
+        return jsonify({"error": "GCS client not initialized"}), 500
+
+    data = request.get_json()
+    source_paths = data.get("sourcePaths")
+    destination_path = data.get("destinationPath")
+
+    if not source_paths or not isinstance(source_paths, list):
+        return jsonify({"error": "sourcePaths must be a non-empty list of strings."}), 400
+    
+    if not destination_path:
+        return jsonify({"error": "destinationPath is required"}), 400
+
+    try:
+        result = gcs_client.move_folder(source_paths, destination_path)
+        return jsonify({"status": "success", "message": result}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/list_files", methods=["GET"])
 def list_files():
     if not gcs_client:
@@ -142,21 +185,31 @@ def list_files():
     files = gcs_client.list_files(folder_name)
     return jsonify({"files": files})
 
+
 @app.route("/upload_file", methods=["POST"])
 def upload_file():
     if not gcs_client:
         return jsonify({"error": "GCS client not initialized"}), 500
+
     if 'file' not in request.files:
         return jsonify({"error": "No file part"}), 400
+
     file = request.files['file']
-    folder = request.form.get("folder")
+    folder = request.args.get("folder")  # Correctly get folder from query parameters
+
     if not folder:
         return jsonify({"error": "Folder name is required"}), 400
+
     if file.filename == '':
         return jsonify({"error": "No selected file"}), 400
+
     if file:
-        result = gcs_client.upload_file(folder, file)
-        return jsonify({"message": result})
+        try:
+            result = gcs_client.upload_file(folder, file)
+            return jsonify({"message": result}), 201
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
 
 @app.route("/download_file/<folder>/<file_name>", methods=["GET"])
 def download_file(folder, file_name):

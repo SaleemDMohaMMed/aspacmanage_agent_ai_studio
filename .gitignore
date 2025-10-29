@@ -1,7 +1,24 @@
-.venv/
-.DS_Store
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# Virtualenv
+.venv/
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
 
 # Local file uploads
 uploads/
+
+# Test files
+*.txt
+
+# Cloud credentials
+service_account.json

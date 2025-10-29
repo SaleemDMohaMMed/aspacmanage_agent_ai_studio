@@ -3,6 +3,7 @@ import json
 from google.cloud import storage
 from google.cloud import secretmanager
 import google.auth
+from datetime import datetime
 
 class GCSClient:
     def __init__(self):
@@ -89,11 +90,83 @@ class GCSClient:
             
         return f"Folder '{folder_name}' and all its contents have been deleted."
 
+    def copy_folder(self, source_paths, destination_path):
+        """Copies folders and their contents to a new destination."""
+        copied_folders = []
+        for source_path in source_paths:
+            source_path = source_path.strip('/') + '/'
+            
+            blobs = list(self.client.list_blobs(self.bucket_name, prefix=source_path))
+            if not blobs:
+                continue
+
+            for blob in blobs:
+                original_file_name = blob.name
+                # Correctly form the destination file name
+                relative_path = os.path.relpath(original_file_name, source_path)
+                
+                if destination_path == '/':
+                    destination_path = ''
+                    
+                destination_file_name = os.path.join(destination_path, os.path.basename(source_path.strip('/')), relative_path)
+                
+                new_blob = self.bucket.blob(destination_file_name)
+                # Handle potential naming conflicts
+                if new_blob.exists():
+                    name, extension = os.path.splitext(destination_file_name)
+                    timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+                    destination_file_name = f"{name}_copy_{timestamp}{extension}"
+
+                self.bucket.copy_blob(blob, self.bucket, destination_file_name)
+
+            copied_folders.append(source_path.strip('/'))
+        
+        if not copied_folders:
+            return "No folders were copied. Please check if the source paths exist and are not empty."
+            
+        return f"Folders {copied_folders} copied successfully to {destination_path or '/'}"
+
+
+    def move_folder(self, source_paths, destination_path):
+        """Moves folders and their contents to a new destination."""
+        moved_folders = []
+        for source_path in source_paths:
+            source_path = source_path.strip('/') + '/'
+
+            self.copy_folder([source_path], destination_path)
+            self.delete_folder(source_path)
+            moved_folders.append(source_path.strip('/'))
+
+        if not moved_folders:
+            return "No folders were moved. Please check if the source paths exist."
+
+        return f"Folders {moved_folders} moved successfully to {destination_path or '/'}"
+
     def list_files(self, folder_name):
-        if not folder_name.endswith('/'):
+        if folder_name == '/':
+            folder_name = ''
+            
+        if folder_name and not folder_name.endswith('/'):
             folder_name += '/'
+            
         blobs = self.client.list_blobs(self.bucket_name, prefix=folder_name)
-        return [blob.name[len(folder_name):] for blob in blobs if blob.name != folder_name]
+        
+        files = []
+        for blob in blobs:
+            # Don't include the folder placeholder itself
+            if blob.name == folder_name:
+                continue
+            
+            # Show the path relative to the folder, not the full blob name
+            relative_path = os.path.relpath(blob.name, folder_name)
+            
+            # If listing subfolders, make sure they end with a '/'
+            if blob.name.endswith('/') and not relative_path.endswith('/'):
+                relative_path += '/'
+
+            files.append(relative_path)
+            
+        return files
 
     def upload_file(self, folder, file):
         if not folder:
