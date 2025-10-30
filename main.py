@@ -65,11 +65,32 @@ def upload_file_locally():
         return jsonify({"message": "File uploaded successfully"}), 200
 
 @app.route("/list_folders", methods=["GET"])
-def list_folders():
+def list_folders_and_files():
     if not gcs_client:
         return jsonify({"error": "GCS client not initialized"}), 500
-    folders = gcs_client.list_folders()
-    return jsonify({"folders": folders})
+
+    folder_path = request.args.get('folder', default='/')
+
+    try:
+        folders, files = gcs_client.list_folders(folder_path)
+        
+        current_path = folder_path if folder_path.endswith('/') else folder_path + '/'
+
+        response_data = {
+            "status": "success",
+            "path": current_path,
+            "folders": folders,
+            "files": files
+        }
+
+        if not folders and not files:
+            response_data["status"] = "empty"
+            response_data["message"] = f"No folders or files found in this path: {current_path}"
+
+        return jsonify(response_data), 200
+
+    except Exception as e:
+        return jsonify({"error": f"An error occurred: {str(e)}"}), 500
 
 @app.route("/create_folder", methods=["POST"])
 def create_folder():
@@ -186,7 +207,7 @@ def list_files():
     return jsonify({"files": files})
 
 
-@app.route("/upload_file", methods=["POST"])
+@app.route("/upload", methods=["POST"])
 def upload_file():
     if not gcs_client:
         return jsonify({"error": "GCS client not initialized"}), 500
@@ -195,7 +216,7 @@ def upload_file():
         return jsonify({"error": "No file part"}), 400
 
     file = request.files['file']
-    folder = request.args.get("folder")  # Correctly get folder from query parameters
+    folder = request.form.get("folder") 
 
     if not folder:
         return jsonify({"error": "Folder name is required"}), 400
