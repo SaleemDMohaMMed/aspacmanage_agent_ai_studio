@@ -1,5 +1,6 @@
 import os
 import json
+import logging
 from google.cloud import storage
 from google.cloud import secretmanager
 import google.auth
@@ -7,9 +8,13 @@ from datetime import datetime
 
 class GCSClient:
     def __init__(self):
+        # --- Logging Setup ---
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.INFO)
+
         # --- Secure Credential Loading ---
         if "K_SERVICE" in os.environ:
-            print("Production environment detected. Loading credentials from Secret Manager.")
+            self.logger.info("Production environment detected. Loading credentials from Secret Manager.")
             try:
                 _, project_id = google.auth.default()
                 secret_id = "service_account_json"
@@ -20,20 +25,20 @@ class GCSClient:
                 secret_payload = response.payload.data.decode("UTF-8")
                 credentials_info = json.loads(secret_payload)
                 self.client = storage.Client.from_service_account_info(credentials_info)
-                print("Successfully initialized GCSClient from Secret Manager.")
+                self.logger.info("Successfully initialized GCSClient from Secret Manager.")
             except Exception as e:
-                print(f"CRITICAL: Failed to load credentials from Secret Manager. Error: {e}")
+                self.logger.critical(f"Failed to load credentials from Secret Manager. Error: {e}")
                 self.client = storage.Client()
         else:
-            print("Local environment detected. Loading credentials from service_account.json.")
+            self.logger.info("Local environment detected. Loading credentials from service_account.json.")
             service_account_path = 'service_account.json'
             try:
                 if not os.path.exists(service_account_path):
                     raise FileNotFoundError(f"Service account file not found at {service_account_path}")
                 self.client = storage.Client.from_service_account_json(service_account_path)
-                print("Successfully initialized GCSClient from local file.")
+                self.logger.info("Successfully initialized GCSClient from local file.")
             except Exception as e:
-                print(f"CRITICAL: Could not initialize GCSClient. Error: {e}")
+                self.logger.critical(f"Could not initialize GCSClient. Error: {e}")
                 self.client = storage.Client()
 
         self.bucket_name = "storage_file_management"
@@ -54,23 +59,16 @@ class GCSClient:
         folders = set()
         files = set()
 
-        # Process pages to get prefixes (folders) and blobs (files)
         for page in iterator.pages:
-            # The 'prefixes' attribute of a page contains the subdirectories.
             for p in page.prefixes:
-                # Extract folder name from the full prefix
                 folder_name = p[len(prefix):-1]
-                if folder_name: # Ensure we don't add empty strings
+                if folder_name:
                     folders.add(folder_name)
             
-            # The items in the page iterator are the blobs (files).
             for blob in page:
-                # A blob that is a "folder" placeholder will have the same name as the prefix.
-                # We want to list files, not the folder itself.
                 if blob.name != prefix:
-                    # Extract file name from the full blob name
                     file_name = blob.name[len(prefix):]
-                    if file_name: # Ensure we don't add empty strings
+                    if file_name:
                         files.add(file_name)
 
         return sorted(list(folders)), sorted(list(files))
@@ -111,7 +109,6 @@ class GCSClient:
         blob.upload_from_file(file)
         return f"File {file.filename} uploaded to {folder_path or '/'}"
 
-    # ... other methods remain unchanged ...
     def copy_folder(self, source_paths, destination_path):
         copied_folders = []
         for source_path in source_paths:
@@ -184,10 +181,16 @@ class GCSClient:
         return files
 
     def download_file(self, folder, file_name):
-        blob_name = os.path.join(folder, file_name)
+        self.logger.info(f"--- GCSClient: download_file called with folder: '{folder}', file_name: '{file_name}' ---")
+        folder_path = folder.strip('/')
+        self.logger.info(f"Sanitized folder_path: '{folder_path}'")
+        blob_name = os.path.join(folder_path, file_name)
+        self.logger.info(f"Attempting to access blob: '{blob_name}'")
         blob = self.bucket.blob(blob_name)
         if not blob.exists():
-            raise FileNotFoundError(f"File {file_name} not found in {folder}")
+            self.logger.error(f"Blob '{blob_name}' does not exist.")
+            raise FileNotFoundError(f"File '{file_name}' not found in folder '{folder}'")
+        self.logger.info(f"Blob '{blob_name}' found. Downloading...")
         return blob.download_as_bytes()
 
     def delete_file(self, folder, file_name):

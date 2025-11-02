@@ -1,5 +1,7 @@
 
 import os
+import logging
+import sys
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
@@ -12,6 +14,19 @@ app = Flask(__name__)
 # More robust CORS configuration to handle all cases
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
+# --- Dual Logging Setup (File and Console) ---
+log_file = 'app.log'
+# This setup ensures logs go to both the console and the log file.
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler(sys.stdout) # Explicitly log to standard out
+    ]
+)
+
+
 # Define the upload folder and ensure it exists
 UPLOAD_FOLDER = 'uploads'
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -21,7 +36,7 @@ try:
     gcs_client = GCSClient()
     ai_agent = AIAgent(gcs_client)
 except Exception as e:
-    print(f"Error initializing GCSClient or AIAgent: {e}")
+    logging.error(f"Error initializing GCSClient or AIAgent: {e}")
     gcs_client = None
     ai_agent = None
 
@@ -200,11 +215,29 @@ def move_folder():
 def list_files():
     if not gcs_client:
         return jsonify({"error": "GCS client not initialized"}), 500
-    folder_name = request.args.get("folder")
-    if not folder_name:
-        return jsonify({"error": "Folder name is required"}), 400
-    files = gcs_client.list_files(folder_name)
-    return jsonify({"files": files})
+
+    folder_path = request.args.get('folder', default='/')
+
+    try:
+        folders, files = gcs_client.list_folders(folder_path)
+        
+        current_path = folder_path if folder_path.endswith('/') else folder_path + '/'
+
+        response_data = {
+            "status": "success",
+            "path": current_path,
+            "folders": folders,
+            "files": files
+        }
+
+        if not folders and not files:
+            response_data["status"] = "empty"
+            response_data["message"] = f"No folders or files found in this path: {current_path}"
+
+        return jsonify(response_data), 200
+
+    except Exception as e:
+        return jsonify({"error": f"An error occurred: {str(e)}"}), 500
 
 
 @app.route("/upload", methods=["POST"])
@@ -232,15 +265,36 @@ def upload_file():
             return jsonify({"error": str(e)}), 500
 
 
-@app.route("/download_file/<folder>/<file_name>", methods=["GET"])
-def download_file(folder, file_name):
+@app.route("/download_file/<path:file_path>", methods=["GET"])
+def download_file(file_path):
+    logging.info(f"--- Download file request received for: {file_path} ---")
     if not gcs_client:
+        logging.error("GCS client not initialized")
         return jsonify({"error": "GCS client not initialized"}), 500
     try:
+        folder = os.path.dirname(file_path)
+        file_name = os.path.basename(file_path)
+        logging.info(f"Extracted folder: '{folder}' and file_name: '{file_name}'")
+
         file_content = gcs_client.download_file(folder, file_name)
+        logging.info(f"Successfully retrieved file content for {file_path}")
         return send_file(io.BytesIO(file_content), as_attachment=True, download_name=file_name)
     except Exception as e:
-        return jsonify({"error": str(e)}), 404
+        logging.error(f"Error downloading file {file_path}: {e}")
+        return jsonify({"error": f"An error occurred while trying to download the file: {str(e)}"}), 404
+
+@app.route("/download_local_file/<path:file_path>")
+def download_local_file(file_path):
+    """Downloads a file from the local server."""
+    logging.info(f"--- Download local file request received for: {file_path} ---")
+    try:
+        return send_file(file_path, as_attachment=True)
+    except FileNotFoundError:
+        logging.error(f"File not found: {file_path}")
+        return jsonify({"error": "File not found"}), 404
+    except Exception as e:
+        logging.error(f"Error downloading local file {file_path}: {e}")
+        return jsonify({"error": f"An error occurred while trying to download the file: {str(e)}"}), 500
 
 @app.route("/delete_file", methods=["DELETE"])
 def delete_file():
@@ -297,6 +351,11 @@ def chat():
         return jsonify({"error": "Message is required"}), 400
     response = ai_agent.chat(message)
     return jsonify(response)
+
+@app.route("/test_log")
+def test_log():
+    logging.info("This is a test log message.")
+    return "Log message sent!"
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=8080, debug=True)
