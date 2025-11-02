@@ -14,17 +14,25 @@ app = Flask(__name__)
 # More robust CORS configuration to handle all cases
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
-# --- Dual Logging Setup (File and Console) ---
+# --- Flask App Logger Configuration ---
 log_file = 'app.log'
-# This setup ensures logs go to both the console and the log file.
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler(sys.stdout) # Explicitly log to standard out
-    ]
-)
+# Create a file handler
+file_handler = logging.FileHandler(log_file)
+file_handler.setLevel(logging.INFO)
+
+# Create a console handler
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setLevel(logging.INFO)
+
+# Create a formatter and set it for both handlers
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+console_handler.setFormatter(formatter)
+
+# Add the handlers to the app's logger
+app.logger.addHandler(file_handler)
+app.logger.addHandler(console_handler)
+app.logger.setLevel(logging.INFO)
 
 
 # Define the upload folder and ensure it exists
@@ -36,7 +44,7 @@ try:
     gcs_client = GCSClient()
     ai_agent = AIAgent(gcs_client)
 except Exception as e:
-    logging.error(f"Error initializing GCSClient or AIAgent: {e}")
+    app.logger.error(f"Error initializing GCSClient or AIAgent: {e}")
     gcs_client = None
     ai_agent = None
 
@@ -185,8 +193,11 @@ def copy_folder():
         return jsonify({"error": "destinationPath is required"}), 400
 
     try:
-        result = gcs_client.copy_folder(source_paths, destination_path)
-        return jsonify({"status": "success", "message": result}), 200
+        copied_folders_details = gcs_client.copy_folder(source_paths, destination_path)
+        if not copied_folders_details:
+            return jsonify({"status": "no_action", "message": "No folders were copied. Please check if the source paths exist and are not empty."}), 200
+        
+        return jsonify({"status": "success", "message": "Folders copied successfully.", "data": copied_folders_details}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -206,8 +217,11 @@ def move_folder():
         return jsonify({"error": "destinationPath is required"}), 400
 
     try:
-        result = gcs_client.move_folder(source_paths, destination_path)
-        return jsonify({"status": "success", "message": result}), 200
+        moved_folders_details = gcs_client.move_folder(source_paths, destination_path)
+        if not moved_folders_details:
+            return jsonify({"status": "no_action", "message": "No folders were moved. Please check if the source paths exist."}), 200
+
+        return jsonify({"status": "success", "message": "Folders moved successfully.", "data": moved_folders_details}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -267,33 +281,33 @@ def upload_file():
 
 @app.route("/download_file/<path:file_path>", methods=["GET"])
 def download_file(file_path):
-    logging.info(f"--- Download file request received for: {file_path} ---")
+    app.logger.info(f"--- Download file request received for: {file_path} ---")
     if not gcs_client:
-        logging.error("GCS client not initialized")
+        app.logger.error("GCS client not initialized")
         return jsonify({"error": "GCS client not initialized"}), 500
     try:
         folder = os.path.dirname(file_path)
         file_name = os.path.basename(file_path)
-        logging.info(f"Extracted folder: '{folder}' and file_name: '{file_name}'")
+        app.logger.info(f"Extracted folder: '{folder}' and file_name: '{file_name}'")
 
-        file_content = gcs_client.download_file(folder, file_name)
-        logging.info(f"Successfully retrieved file content for {file_path}")
+        file_content = gcs_client.download_.file(folder, file_name)
+        app.logger.info(f"Successfully retrieved file content for {file_path}")
         return send_file(io.BytesIO(file_content), as_attachment=True, download_name=file_name)
     except Exception as e:
-        logging.error(f"Error downloading file {file_path}: {e}")
+        app.logger.error(f"Error downloading file {file_path}: {e}")
         return jsonify({"error": f"An error occurred while trying to download the file: {str(e)}"}), 404
 
 @app.route("/download_local_file/<path:file_path>")
 def download_local_file(file_path):
     """Downloads a file from the local server."""
-    logging.info(f"--- Download local file request received for: {file_path} ---")
+    app.logger.info(f"--- Download local file request received for: {file_path} ---")
     try:
         return send_file(file_path, as_attachment=True)
     except FileNotFoundError:
-        logging.error(f"File not found: {file_path}")
+        app.logger.error(f"File not found: {file_path}")
         return jsonify({"error": "File not found"}), 404
     except Exception as e:
-        logging.error(f"Error downloading local file {file_path}: {e}")
+        app.logger.error(f"Error downloading local file {file_path}: {e}")
         return jsonify({"error": f"An error occurred while trying to download the file: {str(e)}"}), 500
 
 @app.route("/delete_file", methods=["DELETE"])
@@ -354,7 +368,7 @@ def chat():
 
 @app.route("/test_log")
 def test_log():
-    logging.info("This is a test log message.")
+    app.logger.info("This is a test log message.")
     return "Log message sent!"
 
 if __name__ == "__main__":

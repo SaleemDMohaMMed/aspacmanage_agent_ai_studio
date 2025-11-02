@@ -10,7 +10,6 @@ class GCSClient:
     def __init__(self):
         # --- Logging Setup ---
         self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.INFO)
 
         # --- Secure Credential Loading ---
         if "K_SERVICE" in os.environ:
@@ -44,6 +43,45 @@ class GCSClient:
         self.bucket_name = "storage_file_management"
         self.bucket = self.client.bucket(self.bucket_name)
 
+    def _transfer_folder(self, source_path, destination_path, delete_source=False):
+        source_path = source_path.strip('/') + '/'
+        blobs = list(self.client.list_blobs(self.bucket_name, prefix=source_path))
+        if not blobs:
+            return None, None
+
+        files_transferred = []
+        source_folder_name = os.path.basename(source_path.strip('/'))
+        destination_folder_base = os.path.join(destination_path, source_folder_name)
+        if not destination_folder_base.endswith('/'):
+            destination_folder_base += '/'
+
+        for blob in blobs:
+            if blob.name == source_path:
+                continue
+
+            relative_path = blob.name[len(source_path):]
+            destination_blob_name = os.path.join(destination_folder_base, relative_path)
+            
+            new_blob = self.bucket.blob(destination_blob_name)
+            if new_blob.exists():
+                name, extension = os.path.splitext(destination_blob_name)
+                timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+                destination_blob_name = f"{name}_copy_{timestamp}{extension}"
+
+            self.bucket.copy_blob(blob, self.bucket, destination_blob_name)
+            files_transferred.append(relative_path)
+
+        # Ensure the destination folder exists, especially for empty source folders
+        dest_blob = self.bucket.blob(destination_folder_base)
+        if not dest_blob.exists():
+            dest_blob.upload_from_string('')
+
+        if delete_source:
+            for blob in blobs:
+                blob.delete()
+
+        return destination_folder_base, files_transferred
+
     def list_folders(self, folder_path):
         """
         Lists folders and files for a given path in a GCS bucket using the pages iterator.
@@ -68,7 +106,7 @@ class GCSClient:
             for blob in page:
                 if blob.name != prefix:
                     file_name = blob.name[len(prefix):]
-                    if file_name:
+                    if file_name and not file_name.endswith('/'):
                         files.add(file_name)
 
         return sorted(list(folders)), sorted(list(files))
@@ -110,52 +148,32 @@ class GCSClient:
         return f"File {file.filename} uploaded to {folder_path or '/'}"
 
     def copy_folder(self, source_paths, destination_path):
-        copied_folders = []
+        copied_folders_details = []
         for source_path in source_paths:
-            source_path = source_path.strip('/') + '/'
-            
-            blobs = list(self.client.list_blobs(self.bucket_name, prefix=source_path))
-            if not blobs:
-                continue
-
-            for blob in blobs:
-                original_file_name = blob.name
-                relative_path = os.path.relpath(original_file_name, source_path)
-                
-                if destination_path == '/':
-                    destination_path = ''
-                    
-                destination_file_name = os.path.join(destination_path, os.path.basename(source_path.strip('/')), relative_path)
-                
-                new_blob = self.bucket.blob(destination_file_name)
-                if new_blob.exists():
-                    name, extension = os.path.splitext(destination_file_name)
-                    timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
-                    destination_file_name = f"{name}_copy_{timestamp}{extension}"
-
-                self.bucket.copy_blob(blob, self.bucket, destination_file_name)
-
-            copied_folders.append(source_path.strip('/'))
+            destination_folder_name, files_copied = self._transfer_folder(source_path, destination_path)
+            if files_copied:
+                copied_folders_details.append({
+                    "source": source_path,
+                    "destination": destination_folder_name,
+                    "files_copied": files_copied
+                })
         
-        if not copied_folders:
-            return "No folders were copied. Please check if the source paths exist and are not empty."
-            
-        return f"Folders {copied_folders} copied successfully to {destination_path or '/'}"
+        return copied_folders_details
 
 
     def move_folder(self, source_paths, destination_path):
-        moved_folders = []
+        moved_folders_details = []
         for source_path in source_paths:
-            source_path = source_path.strip('/') + '/'
+            destination_folder_name, files_moved = self._transfer_folder(source_path, destination_path, delete_source=True)
+            if files_moved:
+                moved_folders_details.append({
+                    "source": source_path,
+                    "destination": destination_folder_name,
+                    "files_moved": files_moved
+                })
+        
+        return moved_folders_details
 
-            self.copy_folder([source_path], destination_path)
-            self.delete_folder(source_path)
-            moved_folders.append(source_path.strip('/'))
-
-        if not moved_folders:
-            return "No folders were moved. Please check if the source paths exist."
-
-        return f"Folders {moved_folders} moved successfully to {destination_path or '/'}"
 
     def list_files(self, folder_name):
         if folder_name == '/':
