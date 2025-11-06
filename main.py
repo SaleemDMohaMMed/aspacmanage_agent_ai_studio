@@ -48,35 +48,8 @@ except Exception as e:
     gcs_client = None
     ai_agent = None
 
-# Hardcoded credentials for login
-HARDCODED_CREDENTIALS = {
-    "username": "admin",
-    "password": "admin123"
-}
-
-@app.route("/login", methods=["POST"])
-def login():
-    data = request.get_json()
-    username = data.get("username")
-    password = data.get("password")
-
-    if username == HARDCODED_CREDENTIALS["username"] and password == HARDCODED_CREDENTIALS["password"]:
-        # In a real application, you would generate a proper JWT token here
-        return jsonify({"token": "dummy-jwt-token"})
-    else:
-        return jsonify({"error": "Invalid credentials"}), 401
-
 @app.route("/files", methods=["POST"])
 def upload_file_locally():
-    # Check for authorization header
-    if 'Authorization' not in request.headers:
-        return jsonify({"error": "Authorization header is missing"}), 401
-
-    auth_header = request.headers.get('Authorization')
-    # In a real app, you'd parse the token and verify it's valid
-    if auth_header != 'Bearer dummy-jwt-token':
-        return jsonify({"error": "Invalid token"}), 401
-
     if 'file' not in request.files:
         return jsonify({"error": "No file part"}), 400
     file = request.files['file']
@@ -117,8 +90,6 @@ def list_folders_and_files():
 
 @app.route("/create_folder", methods=["POST"])
 def create_folder():
-    if 'Authorization' not in request.headers:
-        return jsonify({"error": "Authorization header is missing"}), 401
     if not gcs_client:
         return jsonify({"error": "GCS client not initialized"}), 500
     
@@ -136,8 +107,6 @@ def create_folder():
 
 @app.route("/delete_folder", methods=["DELETE"])
 def delete_folder():
-    if 'Authorization' not in request.headers:
-        return jsonify({"error": "Authorization header is missing"}), 401
     if not gcs_client:
         return jsonify({"error": "GCS client not initialized"}), 500
     
@@ -255,28 +224,48 @@ def list_files():
 
 
 @app.route("/upload", methods=["POST"])
-def upload_file():
+def upload_files():
     if not gcs_client:
         return jsonify({"error": "GCS client not initialized"}), 500
 
-    if 'file' not in request.files:
-        return jsonify({"error": "No file part"}), 400
+    files = request.files.getlist("files[]")
+    paths = request.form.getlist("paths[]")
 
-    file = request.files['file']
-    folder = request.form.get("folder") 
+    if not files:
+        return jsonify({"error": "No files provided"}), 400
+    if not paths:
+        return jsonify({"error": "No paths provided"}), 400
+    if len(files) != len(paths):
+        return jsonify({"error": "The number of files and paths must be the same"}), 400
 
-    if not folder:
-        return jsonify({"error": "Folder name is required"}), 400
+    success_files = []
+    error_files = []
 
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
+    for i, file in enumerate(files):
+        if file.filename == '':
+            error_files.append({"filename": "Unknown", "error": "A file with an empty filename was provided."})
+            continue
 
-    if file:
         try:
+            full_path = paths[i]
+            folder, filename = os.path.split(full_path)
+            
             result = gcs_client.upload_file(folder, file)
-            return jsonify({"message": result}), 201
+
+            success_files.append({"filename": file.filename, "message": result})
         except Exception as e:
-            return jsonify({"error": str(e)}), 500
+            error_files.append({"filename": file.filename, "error": str(e)})
+
+    response = {
+        "message": f"Upload process completed. {len(success_files)} successful, {len(error_files)} errors.",
+        "success_files": success_files,
+        "error_files": error_files
+    }
+
+    if error_files:
+        return jsonify(response), 207 # Multi-Status
+    else:
+        return jsonify(response), 201
 
 
 @app.route("/download_file/<path:file_path>", methods=["GET"])
@@ -290,7 +279,7 @@ def download_file(file_path):
         file_name = os.path.basename(file_path)
         app.logger.info(f"Extracted folder: '{folder}' and file_name: '{file_name}'")
 
-        file_content = gcs_client.download_.file(folder, file_name)
+        file_content = gcs_client.download_file(folder, file_name)
         app.logger.info(f"Successfully retrieved file content for {file_path}")
         return send_file(io.BytesIO(file_content), as_attachment=True, download_name=file_name)
     except Exception as e:
