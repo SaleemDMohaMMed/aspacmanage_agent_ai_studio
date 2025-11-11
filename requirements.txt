@@ -1,6 +1,5 @@
-Flask
-Flask-Cors
-gunicorn
+flask
+flask_cors
+werkzeug
+python-dotenv
 google-cloud-storage
-google-cloud-secret-manager
-Werkzeug
